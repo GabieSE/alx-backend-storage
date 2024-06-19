@@ -1,54 +1,56 @@
 #!/usr/bin/env python3
-"""In this tasks, we will implement a get_page function
-(prototype: def get_page(url: str) -> str:). The core of
-the function is very simple. It uses the requests module
-to obtain the HTML content of a particular URL and returns it.
-
-Start in a new file named web.py and do not reuse the code
-written in exercise.py.
-
-Inside get_page track how many times a particular URL was
-accessed in the key "count:{url}" and cache the result with
-an expiration time of 10 seconds.
-
-Tip: Use http://slowwly.robertomurray.co.uk to simulate
-a slow response and test your caching."""
-
-
-import redis
+"""
+web cache and tracker
+"""
 import requests
+import redis
 from functools import wraps
 
-r = redis.Redis()
+try:
+    store = redis.Redis(host='localhost', port=6379, db=0)
+except redis.ConnectionError as e:
+    print(f"Redis connection error: {e}")
 
 
-def url_access_count(method):
-    """decorator for get_page function"""
+def count_url_access(method):
+    """Decorator counting how many times a URL is accessed"""
     @wraps(method)
     def wrapper(url):
-        """wrapper function"""
-        key = "cached:" + url
-        cached_value = r.get(key)
-        if cached_value:
-            return cached_value.decode("utf-8")
+        cached_key = "cached:" + url
+        count_key = "count:" + url
 
-            # Get new content and update cache
-        key_count = "count:" + url
-        html_content = method(url)
+        # Check if the URL data is already cached
+        cached_data = store.get(cached_key)
+        if cached_data:
+            print(f"Cache hit for {url}")
+            return cached_data.decode("utf-8")
 
-        r.incr(key_count)
-        r.set(key, html_content, ex=10)
-        r.expire(key, 10)
-        return html_content
+        # Cache miss, fetch the URL data
+        print(f"Cache miss for {url}, fetching data...")
+        try:
+            html = method(url)
+        except requests.RequestException as e:
+            print(f"Request error: {e}")
+            return None
+
+        # Store the data in cache and increment the access count
+        store.setex(cached_key, 10, html)  # setex sets the value and expiration time in one call
+        store.incr(count_key)
+        return html
+
     return wrapper
 
 
-@url_access_count
+@count_url_access
 def get_page(url: str) -> str:
-    """obtain the HTML content of a particular"""
-    results = requests.get(url)
-    return results.text
+    """Returns HTML content of a url"""
+    res = requests.get(url)
+    res.raise_for_status()  # Raises an HTTPError if the HTTP request returned an unsuccessful status code
+    return res.text
 
 
+# Example usage:
 if __name__ == "__main__":
-    get_page('http://slowwly.robertomurray.co.uk')
+    url = "http://slowwly.robertomurray.co.uk/delay/5000/url/http://www.google.com"
+    print(get_page(url))
+    print(get_page(url))
